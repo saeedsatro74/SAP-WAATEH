@@ -60,19 +60,33 @@ alter table public.allowed_users enable row level security;
 -- Create security definer helper function to safely check admin role and bypass RLS recursion
 create or replace function public.is_admin(p_email text)
 returns boolean as $$
+declare
+  v_role text;
 begin
+  -- 1. Fast-path check for primary admin email
   if p_email is null or trim(p_email) = '' then
     return false;
   end if;
-  return exists (
-    select 1 from public.allowed_users
-    where lower(trim(email)) = lower(trim(p_email))
-      and (lower(trim(role)) = 'admin' or lower(trim(role)) = 'administrator')
-  );
+  
+  if lower(trim(p_email)) = 'saeedsatro7@gmail.com' then
+    return true;
+  end if;
+
+  -- 2. Query allowed_users list safely.
+  -- Since the policies on allowed_users do NOT call is_admin, this query is perfectly safe and won't recurse!
+  select role into v_role from public.allowed_users
+  where lower(trim(email)) = lower(trim(p_email))
+  limit 1;
+
+  if v_role is not null and lower(trim(v_role)) in ('admin', 'administrator', 'warehouse manager') then
+    return true;
+  end if;
+
+  return false;
 end;
 $$ language plpgsql security definer;
 
--- Policies for allowed_users
+-- Policies for allowed_users (Recursion-free)
 drop policy if exists "Allow public read access to allowed_users" on public.allowed_users;
 create policy "Allow public read access to allowed_users" on public.allowed_users
   for select using (true);
@@ -80,7 +94,12 @@ create policy "Allow public read access to allowed_users" on public.allowed_user
 drop policy if exists "Allow all actions on allowed_users for Admin users" on public.allowed_users;
 create policy "Allow all actions on allowed_users for Admin users" on public.allowed_users
   for all using (
-    public.is_admin(auth.jwt() ->> 'email')
+    lower(trim(auth.jwt() ->> 'email')) = 'saeedsatro7@gmail.com'
+    or exists (
+      select 1 from public.profiles
+      where id = auth.uid() 
+        and lower(trim(role)) in ('admin', 'administrator')
+    )
   );
 
 drop policy if exists "Allow authenticated insert of own email as operator" on public.allowed_users;
@@ -91,15 +110,12 @@ create policy "Allow authenticated insert of own email as operator" on public.al
     and lower(trim(role)) = 'operator'
   );
 
--- Seed primary administrator and operator accounts
+-- Seed primary administrator and operator accounts safely
+delete from public.allowed_users where lower(trim(email)) in ('saeedsatro7@gmail.com', 'saeedsatro74@gmail.com');
 insert into public.allowed_users (email, full_name, role, department)
 values 
   ('saeedsatro7@gmail.com', 'Saeed Satari', 'admin', 'Logistics Control'),
-  ('saeedsatro74@gmail.com', 'سعید', 'operator', 'Warehouse Operations')
-on conflict (email) do update
-set role = excluded.role,
-    full_name = excluded.full_name,
-    department = excluded.department;
+  ('saeedsatro74@gmail.com', 'سعید', 'operator', 'Warehouse Operations');
 
 -- 1. PROFILES TABLE
 create table if not exists public.profiles (
@@ -113,6 +129,15 @@ create table if not exists public.profiles (
   department text,
   created_at timestamptz default now()
 );
+
+-- Ensure profiles columns exist for backward compatibility with older database schemas
+alter table public.profiles add column if not exists email text;
+alter table public.profiles add column if not exists name text;
+alter table public.profiles add column if not exists role text;
+alter table public.profiles add column if not exists picture text;
+alter table public.profiles add column if not exists phone text;
+alter table public.profiles add column if not exists bio text;
+alter table public.profiles add column if not exists department text;
 
 -- Enable RLS on profiles
 alter table public.profiles enable row level security;
@@ -320,6 +345,12 @@ drop policy if exists "Allow insert on audit for authenticated users" on public.
 create policy "Allow insert on audit for authenticated users" on public.inventory_audit
   for insert with check (auth.role() = 'authenticated');
 
+drop policy if exists "Allow delete on audit for Admin users" on public.inventory_audit;
+create policy "Allow delete on audit for Admin users" on public.inventory_audit
+  for delete using (
+    public.is_admin(auth.jwt() ->> 'email')
+  );
+
 create index if not exists idx_audit_sku on public.inventory_audit(product_sku);
 create index if not exists idx_audit_created_at on public.inventory_audit(created_at);
 
@@ -345,6 +376,12 @@ create policy "Allow read access to corrections for authenticated users" on publ
 drop policy if exists "Allow insert access to corrections for admin users" on public.inventory_corrections;
 create policy "Allow insert access to corrections for admin users" on public.inventory_corrections
   for insert with check (auth.role() = 'authenticated');
+
+drop policy if exists "Allow delete on corrections for Admin users" on public.inventory_corrections;
+create policy "Allow delete on corrections for Admin users" on public.inventory_corrections
+  for delete using (
+    public.is_admin(auth.jwt() ->> 'email')
+  );
 
 -- 7. TRANSACTIONAL DATABASE FUNCTION (FOR DATABASE CONSISTENCY)
 -- This executes both movement log insert, quantity update, and audit log generation inside a single database transaction safely.
@@ -442,6 +479,45 @@ begin
     'previous_quantity', v_current_quantity,
     'new_quantity', v_new_quantity
   );
+exception when others then
+  return jsonb_build_object('success', false, 'error', SQLERRM);
+end;
+$$ language plpgsql security definer;
+
+-- 8. PURGE ALL WAREHOUSE DATA FUNCTION (SECURITY DEFINER)
+-- Deletes all products, movements, corrections, and audit logs safely and resets layout config.
+create or replace function public.purge_all_warehouse_data()
+returns jsonb as $$
+declare
+  v_caller_email text;
+begin
+  -- Retrieve user email from auth context
+  v_caller_email := auth.jwt() ->> 'email';
+  
+  -- Fallback: resolve email from public.profiles table using auth.uid()
+  if v_caller_email is null or trim(v_caller_email) = '' then
+    select email into v_caller_email from public.profiles where id = auth.uid() limit 1;
+  end if;
+
+  -- Verify the caller is an administrator
+  if not public.is_admin(v_caller_email) then
+    raise exception 'Permission Denied: Only administrators can purge warehouse data. Your identified email is: %', coalesce(v_caller_email, 'unidentified');
+  end if;
+
+  -- Delete from dependent tables in order
+  delete from public.inventory_corrections;
+  delete from public.inventory_audit;
+  delete from public.movements;
+  delete from public.products;
+
+  -- Reset configuration keys to default values using INSERT ON CONFLICT for absolute certainty
+  insert into public.system_config (key, value)
+  values 
+    ('warehouse_layout', '{"racksCount": 10, "shelvesCount": 5, "positionsCount": 5}'::jsonb),
+    ('global_min_stock', '15'::jsonb)
+  on conflict (key) do update set value = excluded.value;
+
+  return jsonb_build_object('success', true);
 exception when others then
   return jsonb_build_object('success', false, 'error', SQLERRM);
 end;

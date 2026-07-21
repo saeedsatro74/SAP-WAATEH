@@ -3,6 +3,7 @@ import { WarehouseConfig, UserSession, Product } from '../types';
 import { Language, TRANSLATIONS } from '../translations';
 import Avatar from './Avatar';
 import InfoCard from './InfoCard';
+import { SUPABASE_SQL_SETUP } from '../supabase';
 import {
   Settings,
   Grid,
@@ -19,7 +20,9 @@ import {
   AlertTriangle,
   Mail,
   Building,
-  KeyRound
+  KeyRound,
+  Copy,
+  Terminal
 } from 'lucide-react';
 
 interface SettingsTabProps {
@@ -55,7 +58,10 @@ export default function SettingsTab({
   const isRtl = lang === 'fa';
 
   // State for sub-tabs inside Settings
-  const [activeSubTab, setActiveSubTab] = useState<'profile' | 'users' | 'warehouse' | 'alerts'>('profile');
+  const [activeSubTab, setActiveSubTab] = useState<'profile' | 'users' | 'warehouse' | 'alerts' | 'purge'>('profile');
+
+  const [copiedResetSql, setCopiedResetSql] = useState(false);
+  const [showResetInstructions, setShowResetInstructions] = useState(false);
 
   // Sub-tab 1: Profile Settings state
   const [profileName, setProfileName] = useState(session.name);
@@ -86,6 +92,10 @@ export default function SettingsTab({
   const [isDeletingUser, setIsDeletingUser] = useState(false);
   const [isAddingUser, setIsAddingUser] = useState(false);
   const [isUpdatingUserRole, setIsUpdatingUserRole] = useState(false);
+
+  // Purge Confirmation States
+  const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
+  const [purgeInputText, setPurgeInputText] = useState('');
 
   const triggerSuccess = (msg: string) => {
     setSuccessMsg(msg);
@@ -301,6 +311,18 @@ export default function SettingsTab({
               {lowStockProducts.length}
             </span>
           )}
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('purge')}
+          className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer text-right w-full ${
+            activeSubTab === 'purge'
+              ? 'bg-rose-600 text-white shadow-md shadow-rose-500/15'
+              : 'text-rose-600 hover:bg-rose-50/60'
+          }`}
+        >
+          <Trash2 size={15} />
+          <span>{lang === 'fa' ? 'حذف و پاک‌سازی کل انبار' : 'Purge Warehouse Data'}</span>
         </button>
 
         <div className="mt-auto pt-6 border-t border-slate-100 space-y-4">
@@ -698,28 +720,168 @@ export default function SettingsTab({
                 {t.saveConfig}
               </button>
             </form>
+          </div>
+        )}
 
-            {/* Danger Zone */}
-            <div className="border-t border-slate-100 pt-5 mt-5 space-y-3">
-              <h4 className="text-xs font-black text-rose-700 uppercase tracking-wider flex items-center gap-1.5">
-                ⚠️ {lang === 'fa' ? 'حذف و بازنشانی کامل اطلاعات' : 'Danger Zone / System Purge'}
-              </h4>
-              <p className="text-[10px] font-semibold text-rose-400">
-                {lang === 'fa' 
-                  ? 'این اقدام تمامی کالاها، تراکنش‌ها، کاربران تعریف شده و ساختار انبار را به صورت دائم پاک خواهد کرد.' 
-                  : 'Permanently deletes all registered inventory, logs and custom configurations. This cannot be undone.'}
+        {/* 5. DATA PURGE & RESET CONTROL PANEL */}
+        {activeSubTab === 'purge' && (
+          <div className="space-y-6 animate-fade-in">
+            <div className="border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-black text-rose-600 flex items-center gap-1.5">
+                <Trash2 size={16} />
+                <span>{lang === 'fa' ? 'پاک‌سازی و حذف دائم کل اطلاعات انبار' : 'Purge All Warehouse Data'}</span>
+              </h3>
+              <p className="text-[10px] font-bold text-slate-400 mt-0.5">
+                {lang === 'fa'
+                  ? 'کنترل پنل مخصوص مدیریت جهت صفر کردن موجودی کالاها و پاک‌سازی سوابق انبار'
+                  : 'Administrator dashboard to purge inventory, reset stocks, and delete transaction history'}
               </p>
+            </div>
+
+            <div className="bg-rose-50/40 border border-rose-100 rounded-2xl p-5 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="size-10 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
+                  <AlertTriangle size={20} />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-xs font-black text-rose-800">
+                    {lang === 'fa' ? 'توجه: این اقدام غیرقابل بازگشت است!' : 'Warning: This action is permanent!'}
+                  </h4>
+                  <p className="text-[10px] font-bold text-rose-600/80 leading-relaxed">
+                    {lang === 'fa'
+                      ? 'با فشردن دکمه پاک‌سازی زیر، تمامی اطلاعات کالاها، مقادیر موجودی، گزارش‌های ورود و خروج، و اصلاحات ثبتی به صورت دائم حذف و صفر خواهند شد.'
+                      : 'Running this action will permanently wipe out all inventory products, quantities, transaction records, and adjustment history.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white border border-rose-100/50 p-4 rounded-xl space-y-2.5 text-xs">
+                <span className="font-extrabold text-slate-500 block">
+                  {lang === 'fa' ? '📊 مواردی که کاملاً پاک خواهند شد:' : '📊 Items to be completely deleted:'}
+                </span>
+                <ul className="list-disc list-inside space-y-1 text-[11px] font-bold text-slate-600 pr-2">
+                  <li>{lang === 'fa' ? 'تمامی کالاهای ثبت شده در انبار (محصولات)' : 'All registered products in the system'}</li>
+                  <li>{lang === 'fa' ? 'سوابق تمامی تراکنش‌های ورودی و خروجی (Movements)' : 'All check-in and check-out transaction logs'}</li>
+                  <li>{lang === 'fa' ? 'گزارش‌های حسابرسی و اصلاحات فیزیکی موجودی' : 'All manual inventory corrections and audit logs'}</li>
+                </ul>
+                <div className="border-t border-dashed border-slate-100 my-2.5 pt-2 text-[11px] font-bold text-emerald-600 flex items-center gap-1.5">
+                  <Check size={12} />
+                  <span>
+                    {lang === 'fa'
+                      ? 'کاربران تعریف‌شده در سیستم و دسترسی‌ها هیچ تغییری نخواهند کرد.'
+                      : 'Registered system users and their login rights will remain untouched.'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="pt-2">
+                {!showPurgeConfirm ? (
+                  <button
+                    onClick={() => setShowPurgeConfirm(true)}
+                    className="bg-rose-600 hover:bg-rose-700 text-white border border-rose-500 px-5 py-3 rounded-xl text-xs font-black transition-all shadow-md shadow-rose-500/10 cursor-pointer flex items-center justify-center gap-2 w-full sm:w-auto"
+                  >
+                    <RefreshCw size={14} />
+                    <span>{lang === 'fa' ? 'تایید و پاک‌سازی کل اطلاعات انبار' : 'Confirm & Purge All Data'}</span>
+                  </button>
+                ) : (
+                  <div className="bg-rose-100/40 border border-rose-200/60 p-4 rounded-xl space-y-4 animate-fade-in text-right" dir={lang === 'fa' ? 'rtl' : 'ltr'}>
+                    <p className="text-[11px] font-bold text-rose-950 leading-relaxed">
+                      {lang === 'fa'
+                        ? '⚠️ هشدار جدی: آیا از حذف کامل تمامی کالاها، تراکنش‌ها و سوابق اطمینان دارید؟ این عمل غیرقابل بازگشت است. برای تایید نهایی، لطفاً کلمه "DELETE" را در کادر زیر بنویسید:'
+                        : '⚠️ CRITICAL WARNING: Are you sure you want to delete all products, movements, and audits? This cannot be undone. To confirm, please type "DELETE" below:'}
+                    </p>
+                    <input
+                      type="text"
+                      value={purgeInputText}
+                      onChange={(e) => setPurgeInputText(e.target.value)}
+                      placeholder={lang === 'fa' ? 'عبارت DELETE را تایپ کنید' : 'Type DELETE to confirm'}
+                      className="w-full bg-white border border-rose-200 rounded-lg px-3 py-2 text-xs font-mono font-bold text-center focus:outline-hidden focus:border-rose-400 focus:ring-1 focus:ring-rose-400"
+                    />
+                    <div className="flex flex-wrap gap-2 justify-end">
+                      <button
+                        onClick={() => {
+                          if (purgeInputText.trim() === 'DELETE') {
+                            onResetData();
+                            setShowPurgeConfirm(false);
+                            setPurgeInputText('');
+                          }
+                        }}
+                        disabled={purgeInputText.trim() !== 'DELETE'}
+                        className="bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-xs font-black transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Trash2 size={13} />
+                        <span>{lang === 'fa' ? 'بله، حذف نهایی کل انبار' : 'Yes, Delete All Data'}</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowPurgeConfirm(false);
+                          setPurgeInputText('');
+                        }}
+                        className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-xs font-black transition-all cursor-pointer"
+                      >
+                        <span>{lang === 'fa' ? 'انصراف' : 'Cancel'}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Optional Database Reset Instructions Toggle */}
+            <div className="bg-slate-50 border border-slate-200/50 p-4 rounded-2xl space-y-2">
               <button
-                onClick={() => {
-                  if (confirm(lang === 'fa' ? 'آیا از حذف کامل داده‌های سیستم مطمئن هستید؟ این عمل غیرقابل بازگشت است!' : 'Are you completely sure you want to clean-slate the system to defaults?')) {
-                    onResetData();
-                  }
-                }}
-                className="bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 px-4 py-2 rounded-xl text-xs font-black transition-colors shadow-2xs cursor-pointer flex items-center gap-1.5"
+                type="button"
+                onClick={() => setShowResetInstructions(!showResetInstructions)}
+                className="text-[10px] font-black text-blue-600 hover:text-blue-700 underline cursor-pointer flex items-center gap-1.5"
               >
-                <RefreshCw size={13} />
-                <span>{lang === 'fa' ? 'بازنشانی کامل به تنظیمات اولیه کارخانه' : 'Reset Database to Defaults'}</span>
+                <Terminal size={12} />
+                <span>
+                  {lang === 'fa' 
+                    ? 'اگر دکمه بالا با خطا مواجه شد (راهنمای کدهای SQL پایگاه داده)' 
+                    : 'If the reset button fails (SQL Setup Guide)'}
+                </span>
               </button>
+
+              {showResetInstructions && (
+                <div className="mt-3 bg-slate-900 rounded-2xl p-4 text-left border border-slate-800 space-y-3 animate-fade-in" dir="ltr">
+                  <p className="text-[10px] font-bold text-slate-300 leading-relaxed" dir={isRtl ? 'rtl' : 'ltr'}>
+                    {lang === 'fa'
+                      ? 'به دلیل فعال بودن سیستم امنیت RLS در Supabase، مرورگر ممکن است دسترسی لازم برای حذف کامل را نداشته باشد. لطفا دکمه «کپی کد SQL» در زیر را بزنید، سپس آن را در بخش SQL Editor در داشبورد کاربری Supabase خود جای‌گذاری (Paste) و اجرا (Run) کنید تا پایگاه داده مجدداً راه‌اندازی و دکمه حذف فعال شود:'
+                      : 'Due to active Row Level Security (RLS) policies in your Supabase database, direct browser delete actions might be blocked. Click "Copy SQL Code" below, open the SQL Editor in your Supabase dashboard, paste, and click RUN to safely authorize database resets:'}
+                  </p>
+                  
+                  <div className="flex items-center justify-between bg-slate-950 px-3 py-1.5 rounded-t-xl border-b border-slate-800 text-[9px] font-mono font-bold text-slate-500">
+                    <span className="text-blue-400 flex items-center gap-1">
+                      <Terminal size={10} />
+                      <span>enable_purge_function.sql</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(SUPABASE_SQL_SETUP);
+                        setCopiedResetSql(true);
+                        setTimeout(() => setCopiedResetSql(false), 2000);
+                      }}
+                      className="hover:text-white text-slate-400 transition-colors cursor-pointer flex items-center gap-1 font-sans text-[10px]"
+                    >
+                      {copiedResetSql ? (
+                        <>
+                          <Check size={11} className="text-emerald-400" />
+                          <span className="text-emerald-400">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={11} />
+                          <span>Copy SQL Code</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <pre className="p-3 bg-slate-950 rounded-b-xl text-[9px] font-mono text-slate-300 max-h-40 overflow-y-auto leading-normal whitespace-pre-wrap select-all">
+                    {SUPABASE_SQL_SETUP}
+                  </pre>
+                </div>
+              )}
             </div>
           </div>
         )}
