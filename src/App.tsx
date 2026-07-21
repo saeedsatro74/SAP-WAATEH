@@ -2882,6 +2882,7 @@ export default function App() {
                   movements={movements}
                   onUpdateProfile={handleUpdateProfile}
                   lang={lang}
+                  setLang={setLang}
                 />
               )}
 

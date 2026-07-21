@@ -14,7 +14,8 @@ import {
   Award,
   Activity,
   Lock,
-  Layers
+  Layers,
+  Globe
 } from 'lucide-react';
 
 interface ProfileTabProps {
@@ -22,6 +23,7 @@ interface ProfileTabProps {
   movements: Movement[];
   onUpdateProfile: (updatedSession: UserSession) => void;
   lang: Language;
+  setLang: (lang: Language) => void;
 }
 
 export default function ProfileTab({
@@ -29,6 +31,7 @@ export default function ProfileTab({
   movements,
   onUpdateProfile,
   lang,
+  setLang,
 }: ProfileTabProps) {
   const t = TRANSLATIONS[lang];
   const isRtl = lang === 'fa';
@@ -141,6 +144,32 @@ export default function ProfileTab({
               {lang === 'fa' ? 'ویرایش پروفایل' : 'Edit Profile Details'}
             </button>
           )}
+
+          {/* System Language Selector */}
+          <div className="w-full border-t border-slate-100 pt-4 space-y-2" dir={isRtl ? 'rtl' : 'ltr'}>
+            <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider flex items-center justify-center gap-1">
+              <Globe size={11} className="text-slate-400" />
+              <span>{lang === 'fa' ? 'زبان سامانه (فارسی / EN)' : 'System Language'}</span>
+            </span>
+            <div className="flex bg-slate-50 border border-slate-200 p-0.5 rounded-xl text-[10px] w-full">
+              <button
+                onClick={() => setLang('en')}
+                className={`flex-1 py-1.5 rounded-lg text-center font-black transition-all cursor-pointer ${
+                  lang === 'en' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                English
+              </button>
+              <button
+                onClick={() => setLang('fa')}
+                className={`flex-1 py-1.5 rounded-lg text-center font-black transition-all cursor-pointer ${
+                  lang === 'fa' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                فارسی
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Profile Content Details & Editor / Right Side */}
