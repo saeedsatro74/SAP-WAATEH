@@ -1,0 +1,6 @@
+{
+  "name": "SAP Waateh",
+  "description": "A high-performance, modern warehouse management system for small storage structures featuring customizable racks, shelves, and positions, detailed inventory, search systems, automatic SKU generation, Excel export, and interactive statistics charts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

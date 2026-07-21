@@ -1,0 +1,36 @@
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;700;900&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  --background: oklch(0.975 0.015 240); /* slate-50 */
+  --foreground: oklch(0.18 0.02 240); /* slate-900 */
+  --card: oklch(1 0 0); /* white */
+  --card-foreground: oklch(0.18 0.02 240); /* slate-900 */
+  --border: oklch(0.93 0.015 240); /* slate-100 */
+  --primary: oklch(0.55 0.18 250); /* blue-600 */
+  --primary-foreground: oklch(1 0 0); /* white */
+  --muted: oklch(0.95 0.01 240); /* slate-100 */
+  --muted-foreground: oklch(0.55 0.02 240); /* slate-500 */
+  --accent: oklch(0.92 0.03 240); /* blue-50 */
+  --accent-foreground: oklch(0.45 0.18 250); /* blue-700 */
+  --success: oklch(0.68 0.16 155); /* emerald-500 */
+  --success-foreground: oklch(1 0 0);
+  --destructive: oklch(0.6 0.18 25); /* red-500 */
+  --destructive-foreground: oklch(1 0 0);
+  --radius: 1rem;
+}
+
+@theme {
+  --font-sans: "Vazirmatn", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Custom Scrollbar hide helper */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
