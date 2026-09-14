@@ -11,7 +11,14 @@ import {
   Boxes,
   FileText,
   MapPin,
-  Clock
+  Clock,
+  Plus,
+  Trash2,
+  Check,
+  X,
+  UserPlus,
+  Users,
+  Search
 } from 'lucide-react';
 
 interface AddMovementTabProps {
@@ -20,9 +27,12 @@ interface AddMovementTabProps {
   lang: Language;
   session: UserSession;
   usersList: UserSession[];
+  employees?: string[];
+  onAddEmployee?: (name: string) => void | Promise<void>;
+  onDeleteEmployee?: (name: string) => void | Promise<void>;
 }
 
-const EMPLOYEES = [
+const DEFAULT_EMPLOYEES_LIST = [
   "کوروش شادمان",
   "جواد شکرالهی",
   "مهدی آصفی",
@@ -42,11 +52,44 @@ const EMPLOYEES = [
   "محمد"
 ];
 
-export default function AddMovementTab({ products, onSubmitMovement, lang, session, usersList }: AddMovementTabProps) {
+export default function AddMovementTab({
+  products,
+  onSubmitMovement,
+  lang,
+  session,
+  usersList,
+  employees,
+  onAddEmployee,
+  onDeleteEmployee
+}: AddMovementTabProps) {
   const t = TRANSLATIONS[lang];
   const isRtl = lang === 'fa';
 
+  const [internalEmployees, setInternalEmployees] = useState<string[]>(() => {
+    try {
+      const local = localStorage.getItem('waateh_employees');
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return DEFAULT_EMPLOYEES_LIST;
+  });
+
+  const activeEmployees = employees && employees.length > 0 ? employees : internalEmployees;
+
   const [personName, setPersonName] = useState(session.name);
+  const [selectedStaff, setSelectedStaff] = useState<string>('');
+  const [showAddInline, setShowAddInline] = useState(false);
+  const [newStaffName, setNewStaffName] = useState('');
+  const [staffInputError, setStaffInputError] = useState('');
+  const [staffToDelete, setStaffToDelete] = useState<string | null>(null);
+  const [showManageModal, setShowManageModal] = useState(false);
+  const [manageSearchQuery, setManageSearchQuery] = useState('');
+  const [manageNewStaffName, setManageNewStaffName] = useState('');
+
   const [productSku, setProductSku] = useState('');
   const [type, setType] = useState<MovementType>('IN');
   const [quantity, setQuantity] = useState(1);
@@ -68,6 +111,66 @@ export default function AddMovementTab({ products, onSubmitMovement, lang, sessi
       setPersonName(session.name);
     }
   }, [session.name]);
+
+  // Handle adding employee (available to both Admin and Operator)
+  const handleAddStaff = async (customName?: string) => {
+    const target = (customName !== undefined ? customName : newStaffName).trim();
+    if (!target) {
+      setStaffInputError(lang === 'fa' ? 'لطفاً نام کارمند را وارد کنید.' : 'Please enter the employee name.');
+      return;
+    }
+    if (activeEmployees.some((e) => e.trim().toLowerCase() === target.toLowerCase())) {
+      setStaffInputError(lang === 'fa' ? 'این کارمند قبلاً در لیست وجود دارد.' : 'This employee already exists in the list.');
+      return;
+    }
+
+    if (onAddEmployee) {
+      await onAddEmployee(target);
+    } else {
+      const updated = [...internalEmployees, target];
+      setInternalEmployees(updated);
+      try {
+        localStorage.setItem('waateh_employees', JSON.stringify(updated));
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+
+    setPersonName(target);
+    setSelectedStaff(target);
+    setNewStaffName('');
+    setManageNewStaffName('');
+    setStaffInputError('');
+    setShowAddInline(false);
+  };
+
+  // Handle deleting employee (available to both Admin and Operator)
+  const handleDeleteStaff = async (targetToDelete: string) => {
+    if (onDeleteEmployee) {
+      await onDeleteEmployee(targetToDelete);
+    } else {
+      const updated = internalEmployees.filter((e) => e.trim().toLowerCase() !== targetToDelete.trim().toLowerCase());
+      setInternalEmployees(updated);
+      try {
+        localStorage.setItem('waateh_employees', JSON.stringify(updated));
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+
+    if (selectedStaff === targetToDelete) {
+      setSelectedStaff('');
+    }
+    if (personName === targetToDelete) {
+      setPersonName('');
+    }
+    setStaffToDelete(null);
+  };
+
+  // Filtered employees for manage modal
+  const filteredEmployees = activeEmployees.filter((name) =>
+    name.toLowerCase().includes(manageSearchQuery.toLowerCase().trim())
+  );
 
   // Find currently selected product details
   const selectedProduct = products.find((p) => p.sku === productSku);
@@ -230,36 +333,186 @@ export default function AddMovementTab({ products, onSubmitMovement, lang, sessi
         </div>
 
         {/* Operator / Person selecting */}
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block px-1 flex items-center gap-1">
             <User size={12} className="text-slate-500" />
             <span>{t.personName} *</span>
           </label>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2 items-stretch">
             <input
               type="text"
               required
               value={personName}
-              onChange={(e) => setPersonName(e.target.value)}
+              onChange={(e) => {
+                setPersonName(e.target.value);
+                if (selectedStaff && e.target.value !== selectedStaff) {
+                  setSelectedStaff('');
+                }
+              }}
               placeholder={lang === 'fa' ? 'مثال: کوروش شادمان' : 'e.g. Kourosh Shadman'}
               className="flex-1 bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-600 focus:bg-white transition-all shadow-xs"
             />
-            {/* Quick staff select drops */}
-            <select
-              onChange={(e) => {
-                if (e.target.value) setPersonName(e.target.value);
-              }}
-              defaultValue=""
-              className="bg-slate-50 border border-slate-200 rounded-xl px-2 text-xs font-bold text-slate-500 cursor-pointer focus:outline-none"
-            >
-              <option value="" disabled>{lang === 'fa' ? 'انتخاب کارکنان' : 'Select Employee'}</option>
-              {EMPLOYEES.map((name) => (
-                <option key={name} value={name}>
-                  {name}
+
+            {/* Quick staff select dropdown with Add and Delete buttons */}
+            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1.5 focus-within:border-blue-500 focus-within:bg-white transition-all shadow-xs shrink-0 self-stretch sm:self-auto">
+              <select
+                value={selectedStaff}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSelectedStaff(val);
+                  if (val) {
+                    setPersonName(val);
+                    setStaffToDelete(null);
+                  }
+                }}
+                className="bg-transparent text-xs font-bold text-slate-700 cursor-pointer focus:outline-none max-w-[130px] sm:max-w-[160px] truncate px-1 py-1"
+              >
+                <option value="" disabled>
+                  {lang === 'fa' ? 'انتخاب کارکنان' : 'Select Employee'}
                 </option>
-              ))}
-            </select>
+                {activeEmployees.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+
+              <div className="h-4 w-px bg-slate-200 mx-0.5" />
+
+              {/* Quick Add Button (+) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddInline(!showAddInline);
+                  setStaffToDelete(null);
+                  setStaffInputError('');
+                }}
+                title={lang === 'fa' ? 'افزودن کارمند جدید به لیست' : 'Add new employee to list'}
+                className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${
+                  showAddInline
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-blue-100 text-blue-700 hover:bg-blue-600 hover:text-white'
+                }`}
+              >
+                <Plus size={14} />
+              </button>
+
+              {/* Quick Delete / Manage Button (🗑️) */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedStaff) {
+                    setStaffToDelete(selectedStaff);
+                    setShowAddInline(false);
+                  } else {
+                    setShowManageModal(true);
+                  }
+                }}
+                title={
+                  selectedStaff
+                    ? (lang === 'fa' ? `حذف «${selectedStaff}» از لیست کارکنان` : `Delete "${selectedStaff}" from list`)
+                    : (lang === 'fa' ? 'مدیریت و حذف کارکنان' : 'Manage & Delete employees')
+                }
+                className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${
+                  selectedStaff
+                    ? 'bg-rose-100 text-rose-700 hover:bg-rose-600 hover:text-white'
+                    : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                }`}
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
           </div>
+
+          {/* Quick Add Inline Bar */}
+          {showAddInline && (
+            <div
+              className="bg-blue-50/90 border border-blue-200 rounded-xl p-2.5 space-y-1.5 animate-fade-in text-right"
+              dir={isRtl ? 'rtl' : 'ltr'}
+            >
+              <div className="flex items-center gap-2">
+                <UserPlus size={15} className="text-blue-600 shrink-0" />
+                <input
+                  type="text"
+                  value={newStaffName}
+                  onChange={(e) => {
+                    setNewStaffName(e.target.value);
+                    setStaffInputError('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddStaff();
+                    } else if (e.key === 'Escape') {
+                      setShowAddInline(false);
+                      setNewStaffName('');
+                      setStaffInputError('');
+                    }
+                  }}
+                  placeholder={lang === 'fa' ? 'نام و نام خانوادگی کارمند جدید...' : 'New employee name...'}
+                  className="flex-1 bg-white border border-blue-200 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-2xs"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => handleAddStaff()}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs shrink-0"
+                >
+                  <Check size={13} />
+                  <span>{lang === 'fa' ? 'افزودن' : 'Add'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddInline(false);
+                    setNewStaffName('');
+                    setStaffInputError('');
+                  }}
+                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0"
+                >
+                  <X size={13} />
+                  <span>{lang === 'fa' ? 'لغو' : 'Cancel'}</span>
+                </button>
+              </div>
+              {staffInputError && (
+                <p className="text-[11px] text-rose-600 font-bold px-1">{staffInputError}</p>
+              )}
+            </div>
+          )}
+
+          {/* Quick Delete Confirmation Bar */}
+          {staffToDelete && (
+            <div
+              className="bg-rose-50 border border-rose-200 rounded-xl p-2.5 flex flex-col sm:flex-row items-center justify-between gap-2 animate-fade-in text-right"
+              dir={isRtl ? 'rtl' : 'ltr'}
+            >
+              <div className="flex items-center gap-2">
+                <Trash2 size={15} className="text-rose-600 shrink-0" />
+                <span className="text-xs font-bold text-rose-950">
+                  {lang === 'fa'
+                    ? `آیا از حذف «${staffToDelete}» از لیست کارکنان اطمینان دارید؟`
+                    : `Are you sure you want to delete "${staffToDelete}" from employee list?`}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleDeleteStaff(staffToDelete)}
+                  className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center gap-1"
+                >
+                  <Trash2 size={12} />
+                  <span>{lang === 'fa' ? 'بله، حذف شود' : 'Yes, Delete'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStaffToDelete(null)}
+                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                >
+                  <span>{lang === 'fa' ? 'انصراف' : 'Cancel'}</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Quantity input */}
@@ -342,6 +595,126 @@ export default function AddMovementTab({ products, onSubmitMovement, lang, sessi
           <span>{isSubmitting ? (lang === 'fa' ? 'در حال ثبت تراکنش...' : 'Registering...') : t.submit}</span>
         </button>
       </form>
+
+      {/* Manage Employees Modal */}
+      {showManageModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
+          <div
+            className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-md w-full p-5 space-y-4 max-h-[85vh] flex flex-col text-right"
+            dir={isRtl ? 'rtl' : 'ltr'}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center">
+                  <Users size={16} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-800">
+                    {lang === 'fa' ? 'مدیریت و حذف کارکنان' : 'Manage & Delete Employees'}
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-bold">
+                    {lang === 'fa' ? `${activeEmployees.length} کارمند ثبت‌شده در سیستم` : `${activeEmployees.length} registered employees`}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowManageModal(false);
+                  setManageSearchQuery('');
+                  setManageNewStaffName('');
+                }}
+                className="w-8 h-8 rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Quick Add Inside Modal */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={manageNewStaffName}
+                onChange={(e) => setManageNewStaffName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddStaff(manageNewStaffName);
+                  }
+                }}
+                placeholder={lang === 'fa' ? 'نام کارمند جدید برای افزودن...' : 'New employee name...'}
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white"
+              />
+              <button
+                type="button"
+                onClick={() => handleAddStaff(manageNewStaffName)}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1 shrink-0 shadow-xs"
+              >
+                <Plus size={14} />
+                <span>{lang === 'fa' ? 'افزودن' : 'Add'}</span>
+              </button>
+            </div>
+
+            {/* Search Filter */}
+            <div className="relative">
+              <input
+                type="text"
+                value={manageSearchQuery}
+                onChange={(e) => setManageSearchQuery(e.target.value)}
+                placeholder={lang === 'fa' ? 'جستجو در بین کارکنان...' : 'Search employees...'}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+
+            {/* List of employees */}
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 pr-1 space-y-1 max-h-[300px]">
+              {filteredEmployees.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-6 font-bold">
+                  {lang === 'fa' ? 'کارمندی یافت نشد.' : 'No employee found.'}
+                </p>
+              ) : (
+                filteredEmployees.map((name) => (
+                  <div
+                    key={name}
+                    className="flex items-center justify-between py-2 px-2 hover:bg-slate-50 rounded-xl transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center text-[10px] font-black">
+                        {name[0] || '؟'}
+                      </div>
+                      <span className="text-xs font-bold text-slate-800">{name}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteStaff(name)}
+                      title={lang === 'fa' ? `حذف ${name}` : `Delete ${name}`}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white transition-colors cursor-pointer"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-slate-100 pt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowManageModal(false);
+                  setManageSearchQuery('');
+                  setManageNewStaffName('');
+                }}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-5 py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                {lang === 'fa' ? 'بستن' : 'Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

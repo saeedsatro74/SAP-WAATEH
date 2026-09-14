@@ -297,7 +297,8 @@ create table if not exists public.system_config (
 insert into public.system_config (key, value)
 values 
   ('warehouse_layout', '{"racksCount": 10, "shelvesCount": 5, "positionsCount": 5}'),
-  ('global_min_stock', '15')
+  ('global_min_stock', '15'),
+  ('warehouse_employees', '["کوروش شادمان", "جواد شکرالهی", "مهدی آصفی", "رامین شهمرادی", "مهدی شجاعی", "امیر محمدکامران", "مرتضی محمدی", "مهدی محمدی", "سید کاظم صادقیان", "مهدی صادقیان", "مهندس ظفری پور", "مهندس فتح پور", "خانم خمسه", "مهدی نوروزی", "محمد خرقانی", "امید صفوی", "محمد"]')
 on conflict (key) do nothing;
 
 alter table public.system_config enable row level security;
@@ -308,9 +309,10 @@ create policy "Allow read access to system config" on public.system_config
 
 drop policy if exists "Allow update access to system config for Admin users" on public.system_config;
 drop policy if exists "Allow all actions on system config for Admin users" on public.system_config;
-create policy "Allow all actions on system config for Admin users" on public.system_config
+drop policy if exists "Allow all actions on system config for authenticated users" on public.system_config;
+create policy "Allow all actions on system config for authenticated users" on public.system_config
   for all using (
-    public.is_admin(auth.jwt() ->> 'email')
+    auth.role() = 'authenticated' or public.is_admin(auth.jwt() ->> 'email')
   );
 
 -- 5. PERFORMANCE INDEXES

@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 
 import { Product, Movement, InventoryCorrection, WarehouseConfig, ActiveTab, UserSession, Language, UnitType, MovementType, InventoryAudit, AuditActionType } from './types';
-import { INITIAL_PRODUCTS, INITIAL_MOVEMENTS, DEFAULT_CONFIG } from './mockData';
+import { INITIAL_PRODUCTS, INITIAL_MOVEMENTS, DEFAULT_CONFIG, DEFAULT_EMPLOYEES } from './mockData';
 import { TRANSLATIONS } from './translations';
 import { supabase, SUPABASE_SQL_SETUP } from './supabase';
 
@@ -78,6 +78,18 @@ export default function App() {
   const [config, setConfig] = useState<WarehouseConfig>(DEFAULT_CONFIG);
   const [usersList, setUsersList] = useState<UserSession[]>([]);
   const [globalMinStock, setGlobalMinStock] = useState<number>(15);
+  const [employees, setEmployees] = useState<string[]>(() => {
+    try {
+      const local = localStorage.getItem('waateh_employees');
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // fallback
+    }
+    return DEFAULT_EMPLOYEES;
+  });
   const [warehouseResetAt, setWarehouseResetAt] = useState<string | null>(() => {
     try {
       return localStorage.getItem('waateh_reset_at');
@@ -172,6 +184,20 @@ export default function App() {
     } else {
       setGlobalMinStock(15);
       localStorage.setItem('waateh_global_min_stock', '15');
+    }
+
+    const localEmployees = localStorage.getItem('waateh_employees');
+    if (localEmployees) {
+      try {
+        const parsed = JSON.parse(localEmployees);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setEmployees(parsed);
+        }
+      } catch {
+        // ignore
+      }
+    } else {
+      localStorage.setItem('waateh_employees', JSON.stringify(DEFAULT_EMPLOYEES));
     }
     
     // Set dynamic users whitelists for local mode
@@ -466,6 +492,15 @@ export default function App() {
           setWarehouseResetAt(currentResetAt);
           try {
             localStorage.setItem('waateh_reset_at', currentResetAt);
+          } catch {
+            // Ignored
+          }
+        }
+        const employeesConfig = configData.find((c: any) => c.key === 'warehouse_employees');
+        if (employeesConfig && Array.isArray(employeesConfig.value) && employeesConfig.value.length > 0) {
+          setEmployees(employeesConfig.value);
+          try {
+            localStorage.setItem('waateh_employees', JSON.stringify(employeesConfig.value));
           } catch {
             // Ignored
           }
@@ -2135,6 +2170,55 @@ export default function App() {
     }
   };
 
+  // Add employee to persistent list (Available to both Admin and Operator)
+  const handleAddEmployee = async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (employees.some(e => e.trim().toLowerCase() === trimmed.toLowerCase())) return;
+
+    const updated = [...employees, trimmed];
+    setEmployees(updated);
+    try {
+      localStorage.setItem('waateh_employees', JSON.stringify(updated));
+    } catch (e) {
+      console.warn("Could not save employees locally:", e);
+    }
+
+    if (!isLocalMode) {
+      try {
+        await supabase.from('system_config').upsert({
+          key: 'warehouse_employees',
+          value: updated
+        });
+      } catch (err) {
+        console.warn("Could not sync employees to DB:", err);
+      }
+    }
+  };
+
+  // Delete employee from persistent list (Available to both Admin and Operator)
+  const handleDeleteEmployee = async (name: string) => {
+    const trimmed = name.trim();
+    const updated = employees.filter(e => e.trim().toLowerCase() !== trimmed.toLowerCase());
+    setEmployees(updated);
+    try {
+      localStorage.setItem('waateh_employees', JSON.stringify(updated));
+    } catch (e) {
+      console.warn("Could not save employees locally:", e);
+    }
+
+    if (!isLocalMode) {
+      try {
+        await supabase.from('system_config').upsert({
+          key: 'warehouse_employees',
+          value: updated
+        });
+      } catch (err) {
+        console.warn("Could not sync employees to DB:", err);
+      }
+    }
+  };
+
   // Trigger seed action
   const handleResetToDefaults = async () => {
     if (isLocalMode) {
@@ -2873,6 +2957,9 @@ export default function App() {
                   lang={lang}
                   session={activeSession}
                   usersList={usersList}
+                  employees={employees}
+                  onAddEmployee={handleAddEmployee}
+                  onDeleteEmployee={handleDeleteEmployee}
                 />
               )}
 
