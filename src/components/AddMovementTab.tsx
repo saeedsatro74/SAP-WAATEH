@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Product, Movement, MovementType, UserSession } from '../types';
 import { Language, TRANSLATIONS } from '../translations';
 import InfoCard from './InfoCard';
@@ -78,7 +78,19 @@ export default function AddMovementTab({
     return DEFAULT_EMPLOYEES_LIST;
   });
 
-  const activeEmployees = employees && employees.length > 0 ? employees : internalEmployees;
+  // Synchronize internal state when parent employees prop updates
+  useEffect(() => {
+    if (employees && employees.length > 0) {
+      setInternalEmployees(employees);
+    }
+  }, [employees]);
+
+  // Combine both so newly added staff are immediately visible without any race condition
+  const activeEmployees = useMemo(() => {
+    const base = employees && employees.length > 0 ? employees : internalEmployees;
+    const combined = Array.from(new Set([...base, ...internalEmployees]));
+    return combined;
+  }, [employees, internalEmployees]);
 
   const [personName, setPersonName] = useState(session.name);
   const [selectedStaff, setSelectedStaff] = useState<string>('');
@@ -124,16 +136,20 @@ export default function AddMovementTab({
       return;
     }
 
-    if (onAddEmployee) {
-      await onAddEmployee(target);
-    } else {
-      const updated = [...internalEmployees, target];
-      setInternalEmployees(updated);
+    // Always update internal state and localStorage immediately
+    setInternalEmployees((prev) => {
+      if (prev.some((e) => e.trim().toLowerCase() === target.toLowerCase())) return prev;
+      const updated = [...prev, target];
       try {
         localStorage.setItem('waateh_employees', JSON.stringify(updated));
       } catch (e) {
         console.warn(e);
       }
+      return updated;
+    });
+
+    if (onAddEmployee) {
+      await onAddEmployee(target);
     }
 
     setPersonName(target);
@@ -146,16 +162,18 @@ export default function AddMovementTab({
 
   // Handle deleting employee (available to both Admin and Operator)
   const handleDeleteStaff = async (targetToDelete: string) => {
-    if (onDeleteEmployee) {
-      await onDeleteEmployee(targetToDelete);
-    } else {
-      const updated = internalEmployees.filter((e) => e.trim().toLowerCase() !== targetToDelete.trim().toLowerCase());
-      setInternalEmployees(updated);
+    setInternalEmployees((prev) => {
+      const updated = prev.filter((e) => e.trim().toLowerCase() !== targetToDelete.trim().toLowerCase());
       try {
         localStorage.setItem('waateh_employees', JSON.stringify(updated));
       } catch (e) {
         console.warn(e);
       }
+      return updated;
+    });
+
+    if (onDeleteEmployee) {
+      await onDeleteEmployee(targetToDelete);
     }
 
     if (selectedStaff === targetToDelete) {

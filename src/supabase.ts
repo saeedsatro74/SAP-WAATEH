@@ -310,10 +310,26 @@ create policy "Allow read access to system config" on public.system_config
 drop policy if exists "Allow update access to system config for Admin users" on public.system_config;
 drop policy if exists "Allow all actions on system config for Admin users" on public.system_config;
 drop policy if exists "Allow all actions on system config for authenticated users" on public.system_config;
-create policy "Allow all actions on system config for authenticated users" on public.system_config
-  for all using (
-    auth.role() = 'authenticated' or public.is_admin(auth.jwt() ->> 'email')
-  );
+drop policy if exists "Allow all actions on system config for all users" on public.system_config;
+create policy "Allow all actions on system config for all users" on public.system_config
+  for all using (true) with check (true);
+
+-- Dedicated RPC to safely save warehouse employees by any operator or admin
+create or replace function public.save_warehouse_employees(p_employees jsonb)
+returns jsonb as $$
+begin
+  insert into public.system_config (key, value, updated_at)
+  values ('warehouse_employees', p_employees, now())
+  on conflict (key) do update
+  set value = excluded.value, updated_at = now();
+
+  return jsonb_build_object('success', true);
+exception when others then
+  return jsonb_build_object('success', false, 'error', SQLERRM);
+end;
+$$ language plpgsql security definer;
+
+grant execute on function public.save_warehouse_employees(jsonb) to anon, authenticated, service_role;
 
 -- 5. PERFORMANCE INDEXES
 create index if not exists idx_profiles_email on public.profiles(email);

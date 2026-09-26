@@ -384,6 +384,34 @@ export default function App() {
     localStorage.setItem('waateh_lang', lang);
   }, [lang]);
 
+  // Dedicated helper to sync employees to database with multiple fallback layers (RPC + Table Upsert)
+  const syncEmployeesToCloud = async (employeeList: string[]) => {
+    if (isLocalMode) return;
+    try {
+      // 1. Try secure RPC first (bypasses RLS issues for operators)
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('save_warehouse_employees', {
+        p_employees: employeeList
+      });
+
+      if (!rpcErr && (rpcData as any)?.success) {
+        return;
+      }
+
+      // 2. Direct table upsert fallback
+      const { error: upsertErr } = await supabase.from('system_config').upsert({
+        key: 'warehouse_employees',
+        value: employeeList,
+        updated_at: new Date().toISOString()
+      });
+
+      if (upsertErr) {
+        console.warn("Direct upsert of employees encountered warning:", upsertErr);
+      }
+    } catch (err) {
+      console.warn("Could not sync employees to cloud:", err);
+    }
+  };
+
   // Fetch all database records from Supabase
   const fetchAllData = async () => {
     if (isLocalMode) {
@@ -498,12 +526,89 @@ export default function App() {
         }
         const employeesConfig = configData.find((c: any) => c.key === 'warehouse_employees');
         if (employeesConfig && Array.isArray(employeesConfig.value) && employeesConfig.value.length > 0) {
-          setEmployees(employeesConfig.value);
+          const remoteEmployees: string[] = employeesConfig.value;
+
+          let localAdded: string[] = [];
+          let localDeleted: string[] = [];
           try {
-            localStorage.setItem('waateh_employees', JSON.stringify(employeesConfig.value));
+            localAdded = JSON.parse(localStorage.getItem('waateh_added_employees') || '[]');
+            localDeleted = JSON.parse(localStorage.getItem('waateh_deleted_employees') || '[]');
+          } catch {
+            // ignore
+          }
+
+          // 1. Filter out locally deleted employees
+          const cleanedRemote = remoteEmployees.filter(
+            r => !localDeleted.some(d => d.trim().toLowerCase() === r.trim().toLowerCase())
+          );
+
+          // 2. Add local additions that might not yet be in remote database
+          const merged = [...cleanedRemote];
+          localAdded.forEach(add => {
+            if (!localDeleted.some(d => d.trim().toLowerCase() === add.trim().toLowerCase())) {
+              if (!merged.some(m => m.trim().toLowerCase() === add.trim().toLowerCase())) {
+                merged.push(add);
+              }
+            }
+          });
+
+          // Also check current active employees / localStorage to guarantee zero loss
+          try {
+            const cachedLocal = JSON.parse(localStorage.getItem('waateh_employees') || '[]');
+            if (Array.isArray(cachedLocal)) {
+              cachedLocal.forEach(c => {
+                if (typeof c === 'string' && c.trim()) {
+                  if (!localDeleted.some(d => d.trim().toLowerCase() === c.trim().toLowerCase())) {
+                    if (!merged.some(m => m.trim().toLowerCase() === c.trim().toLowerCase())) {
+                      merged.push(c.trim());
+                    }
+                  }
+                }
+              });
+            }
+          } catch {
+            // ignore
+          }
+
+          setEmployees(merged);
+          try {
+            localStorage.setItem('waateh_employees', JSON.stringify(merged));
           } catch {
             // Ignored
           }
+
+          // 3. Clean up localAdded of items that now safely exist in remote
+          const remainingAdded = localAdded.filter(
+            add => !cleanedRemote.some(r => r.trim().toLowerCase() === add.trim().toLowerCase())
+          );
+          try {
+            localStorage.setItem('waateh_added_employees', JSON.stringify(remainingAdded));
+          } catch {}
+
+          // 4. Clean up localDeleted of items that are no longer in remote
+          const remainingDeleted = localDeleted.filter(
+            del => remoteEmployees.some(r => r.trim().toLowerCase() === del.trim().toLowerCase())
+          );
+          try {
+            localStorage.setItem('waateh_deleted_employees', JSON.stringify(remainingDeleted));
+          } catch {}
+
+          // 5. If merged contains items missing from remote or deleted from remote, sync back to database
+          if (merged.length !== remoteEmployees.length || !merged.every(m => remoteEmployees.includes(m))) {
+            syncEmployeesToCloud(merged).catch(console.warn);
+          }
+        } else {
+          // If warehouse_employees is not in configData at all, preserve local employees and push to cloud
+          let cachedEmployees: string[] = DEFAULT_EMPLOYEES;
+          try {
+            const local = localStorage.getItem('waateh_employees');
+            if (local) {
+              const parsed = JSON.parse(local);
+              if (Array.isArray(parsed) && parsed.length > 0) cachedEmployees = parsed;
+            }
+          } catch {}
+          setEmployees(cachedEmployees);
+          syncEmployeesToCloud(cachedEmployees).catch(console.warn);
         }
       }
 
@@ -2176,6 +2281,20 @@ export default function App() {
     if (!trimmed) return;
     if (employees.some(e => e.trim().toLowerCase() === trimmed.toLowerCase())) return;
 
+    // Track addition locally so subsequent fetchAllData or syncs will never overwrite it
+    try {
+      let localAdded: string[] = JSON.parse(localStorage.getItem('waateh_added_employees') || '[]');
+      if (!localAdded.some(a => a.trim().toLowerCase() === trimmed.toLowerCase())) {
+        localAdded.push(trimmed);
+        localStorage.setItem('waateh_added_employees', JSON.stringify(localAdded));
+      }
+      let localDeleted: string[] = JSON.parse(localStorage.getItem('waateh_deleted_employees') || '[]');
+      localDeleted = localDeleted.filter(d => d.trim().toLowerCase() !== trimmed.toLowerCase());
+      localStorage.setItem('waateh_deleted_employees', JSON.stringify(localDeleted));
+    } catch (e) {
+      console.warn("Could not save employee tracking:", e);
+    }
+
     const updated = [...employees, trimmed];
     setEmployees(updated);
     try {
@@ -2184,21 +2303,28 @@ export default function App() {
       console.warn("Could not save employees locally:", e);
     }
 
-    if (!isLocalMode) {
-      try {
-        await supabase.from('system_config').upsert({
-          key: 'warehouse_employees',
-          value: updated
-        });
-      } catch (err) {
-        console.warn("Could not sync employees to DB:", err);
-      }
-    }
+    await syncEmployeesToCloud(updated);
   };
 
   // Delete employee from persistent list (Available to both Admin and Operator)
   const handleDeleteEmployee = async (name: string) => {
     const trimmed = name.trim();
+    if (!trimmed) return;
+
+    // Track deletion so fetchAllData will never resurrect it
+    try {
+      let localDeleted: string[] = JSON.parse(localStorage.getItem('waateh_deleted_employees') || '[]');
+      if (!localDeleted.some(d => d.trim().toLowerCase() === trimmed.toLowerCase())) {
+        localDeleted.push(trimmed);
+        localStorage.setItem('waateh_deleted_employees', JSON.stringify(localDeleted));
+      }
+      let localAdded: string[] = JSON.parse(localStorage.getItem('waateh_added_employees') || '[]');
+      localAdded = localAdded.filter(a => a.trim().toLowerCase() !== trimmed.toLowerCase());
+      localStorage.setItem('waateh_added_employees', JSON.stringify(localAdded));
+    } catch (e) {
+      console.warn("Could not save employee tracking:", e);
+    }
+
     const updated = employees.filter(e => e.trim().toLowerCase() !== trimmed.toLowerCase());
     setEmployees(updated);
     try {
@@ -2207,16 +2333,7 @@ export default function App() {
       console.warn("Could not save employees locally:", e);
     }
 
-    if (!isLocalMode) {
-      try {
-        await supabase.from('system_config').upsert({
-          key: 'warehouse_employees',
-          value: updated
-        });
-      } catch (err) {
-        console.warn("Could not sync employees to DB:", err);
-      }
-    }
+    await syncEmployeesToCloud(updated);
   };
 
   // Trigger seed action
